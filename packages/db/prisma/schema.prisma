@@ -1,0 +1,409 @@
+// Whiteboard data model.
+//
+// Sections:
+//   1. Auth.js core models (User, Account, Session, VerificationToken, Authenticator)
+//      — field names/shapes match @auth/prisma-adapter and MUST NOT be renamed.
+//   2. Auth extensions on User (password hash, MFA, lockout) — filled in during
+//      the security session; columns exist now so migrations are additive.
+//   3. Collaboration domain (Organization → Workspace → Board → collaborators).
+//   4. Security/operational tables (RefreshToken, AuditLog, LoginEvent).
+//
+// Security notes are inline. Everything sensitive (password hash, MFA secret,
+// refresh tokens) is stored hashed/encrypted — never in plain text (Guideline #15).
+
+generator client {
+  provider = "prisma-client-js"
+  // Custom output inside the db package. This is the only layout that yields the
+  // FULL generated types under pnpm + moduleResolution: bundler — the client's
+  // internal `@prisma/client/runtime` import resolves via the package's own
+  // node_modules, and consumers import the client by concrete path (bypassing the
+  // broken `@prisma/client` exports-map `types` stub).
+  output   = "../src/generated/client"
+}
+
+datasource db {
+  provider = "postgresql"
+  // Production MUST append ?sslmode=require (Guideline #12).
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+// Enums
+// ---------------------------------------------------------------------------
+
+/// Mirrors the RBAC role set in @whiteboard/shared. Keep the two in sync.
+enum Role {
+  OWNER
+  ADMIN
+  EDITOR
+  VIEWER
+  GUEST
+}
+
+/// Workspace-level roles (Sprint 4). Coarser than board roles; Owner/Admin
+/// inherit access to every board, Member collaborates by default, Viewer is
+/// read-only. No Guest/Editor at the workspace level.
+enum WorkspaceRole {
+  OWNER
+  ADMIN
+  MEMBER
+  VIEWER
+}
+
+enum ShareAccess {
+  PUBLIC
+  RESTRICTED
+}
+
+enum InvitationStatus {
+  PENDING
+  ACCEPTED
+  REVOKED
+  EXPIRED
+}
+
+/// Actions recorded in the audit log (Guideline #16). Extend as features land.
+enum AuditAction {
+  USER_LOGIN_SUCCESS
+  USER_LOGIN_FAILURE
+  USER_LOGOUT
+  PASSWORD_RESET_REQUESTED
+  PASSWORD_RESET_COMPLETED
+  EMAIL_VERIFIED
+  MFA_ENABLED
+  MFA_DISABLED
+  PERMISSION_CHANGED
+  BOARD_SHARED
+  BOARD_UNSHARED
+  USER_INVITED
+  INVITATION_ACCEPTED
+  ACCOUNT_DELETED
+}
+
+// ---------------------------------------------------------------------------
+// 1. Auth.js core models
+// ---------------------------------------------------------------------------
+
+model User {
+  id            String    @id @default(cuid())
+  name          String?
+  email         String    @unique
+  emailVerified DateTime?
+  image         String?
+
+  // --- 2. Auth extensions (security session implements the logic) ---
+  /// Argon2id hash. NULL for OAuth-only accounts. Never store plaintext.
+  passwordHash        String?
+  mfaEnabled          Boolean   @default(false)
+  /// TOTP secret, encrypted at rest (Guideline #15). NULL until MFA enrolled.
+  mfaSecret           String?
+  /// Temporary lockout after repeated failures (Guideline #1).
+  failedLoginAttempts Int       @default(0)
+  lockedUntil         DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  accounts             Account[]
+  sessions             Session[]
+  authenticators       Authenticator[]
+  refreshTokens        RefreshToken[]
+  loginEvents          LoginEvent[]
+  auditLogs            AuditLog[]           @relation("AuditActor")
+  ownedOrganizations   Organization[]       @relation("OrgOwner")
+  workspaceMemberships WorkspaceMember[]
+  boardCollaborations  BoardCollaborator[]
+  createdBoards        Board[]              @relation("BoardCreator")
+  invitationsSent      Invitation[]         @relation("InvitationInviter")
+  shareLinksCreated    ShareLink[]          @relation("ShareLinkCreator")
+  boardStars           BoardStar[]
+
+  @@index([email])
+}
+
+model Account {
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([provider, providerAccountId])
+  @@index([userId])
+}
+
+model Session {
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model VerificationToken {
+  identifier String
+  token      String
+  expires    DateTime
+
+  @@id([identifier, token])
+}
+
+/// WebAuthn / passkey credentials (Auth.js Authenticator model).
+model Authenticator {
+  credentialID         String  @unique
+  userId               String
+  providerAccountId    String
+  credentialPublicKey  String
+  counter              Int
+  credentialDeviceType String
+  credentialBackedUp   Boolean
+  transports           String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([userId, credentialID])
+}
+
+// ---------------------------------------------------------------------------
+// 4. Security / operational tables
+// ---------------------------------------------------------------------------
+
+/// Rotating refresh tokens (Guideline #3). Only the hash is stored; rotation
+/// links each token to the one that replaced it so reuse can be detected.
+model RefreshToken {
+  id           String    @id @default(cuid())
+  userId       String
+  /// SHA-256 (or stronger) hash of the opaque token — never the token itself.
+  tokenHash    String    @unique
+  /// Token family for reuse-detection across a rotation chain.
+  family       String
+  expiresAt    DateTime
+  revokedAt    DateTime?
+  replacedById String?   @unique
+  createdAt    DateTime  @default(now())
+
+  userAgent String?
+  ip        String?
+
+  user       User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  replacedBy RefreshToken? @relation("TokenRotation", fields: [replacedById], references: [id])
+  replaces   RefreshToken? @relation("TokenRotation")
+
+  @@index([userId])
+  @@index([family])
+}
+
+/// Device & login history (Guideline: "Device & Login History").
+model LoginEvent {
+  id         String   @id @default(cuid())
+  userId     String
+  success    Boolean
+  ip         String?
+  userAgent  String?
+  deviceName String?
+  createdAt  DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+}
+
+/// Append-only audit trail (Guideline #16). Never store secrets in `metadata`.
+model AuditLog {
+  id         String      @id @default(cuid())
+  actorId    String?
+  action     AuditAction
+  targetType String?
+  targetId   String?
+  metadata   Json?
+  ip         String?
+  userAgent  String?
+  createdAt  DateTime    @default(now())
+
+  actor User? @relation("AuditActor", fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([actorId, createdAt])
+  @@index([action, createdAt])
+}
+
+// ---------------------------------------------------------------------------
+// 3. Collaboration domain
+// ---------------------------------------------------------------------------
+
+model Organization {
+  id        String   @id @default(cuid())
+  name      String
+  slug      String   @unique
+  ownerId   String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  owner      User        @relation("OrgOwner", fields: [ownerId], references: [id], onDelete: Restrict)
+  workspaces Workspace[]
+
+  @@index([ownerId])
+}
+
+model Workspace {
+  id             String   @id @default(cuid())
+  name           String
+  organizationId String
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  organization Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  members      WorkspaceMember[]
+  boards       Board[]
+
+  @@index([organizationId])
+}
+
+model WorkspaceMember {
+  id          String        @id @default(cuid())
+  workspaceId String
+  userId      String
+  role        WorkspaceRole @default(MEMBER)
+  createdAt   DateTime      @default(now())
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, userId])
+  @@index([userId])
+}
+
+model Board {
+  id          String    @id @default(cuid())
+  name        String
+  workspaceId String
+  createdById String
+  background  String?
+  /// Monotonic version for the persisted document snapshot (optimistic concurrency).
+  version     Int       @default(0)
+  archivedAt  DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  workspace     Workspace           @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  createdBy     User                @relation("BoardCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  collaborators BoardCollaborator[]
+  shareLinks    ShareLink[]
+  snapshots     BoardSnapshot[]
+  invitations   Invitation[]
+  stars         BoardStar[]
+  thumbnail     BoardThumbnail?
+
+  @@index([workspaceId])
+  @@index([createdById])
+}
+
+/// Per-user favorite/star on a board (S3.2). One row per (user, board).
+model BoardStar {
+  id        String   @id @default(cuid())
+  userId    String
+  boardId   String
+  createdAt DateTime @default(now())
+
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  board Board @relation(fields: [boardId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, boardId])
+  @@index([userId])
+}
+
+/// Rasterized preview of a board's canvas (S3.4). Stored in-row for the
+/// foundation; the storage session moves these to signed-URL object storage
+/// (Guideline #13). One-to-one with Board.
+model BoardThumbnail {
+  boardId     String   @id
+  data        Bytes
+  contentType String   @default("image/jpeg")
+  updatedAt   DateTime @updatedAt
+
+  board Board @relation(fields: [boardId], references: [id], onDelete: Cascade)
+}
+
+model BoardCollaborator {
+  id          String   @id @default(cuid())
+  boardId     String
+  userId      String
+  role        Role     @default(VIEWER)
+  invitedById String?
+  createdAt   DateTime @default(now())
+
+  board Board @relation(fields: [boardId], references: [id], onDelete: Cascade)
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([boardId, userId])
+  @@index([userId])
+}
+
+/// Public/restricted share links with an embedded role and optional expiry
+/// (Guideline #22: prevent unauthorized board access through direct URLs).
+model ShareLink {
+  id          String      @id @default(cuid())
+  boardId     String
+  /// Opaque, high-entropy, randomly generated token in the URL.
+  token       String      @unique
+  access      ShareAccess @default(RESTRICTED)
+  role        Role        @default(VIEWER)
+  createdById String
+  expiresAt   DateTime?
+  revokedAt   DateTime?
+  createdAt   DateTime    @default(now())
+
+  board     Board @relation(fields: [boardId], references: [id], onDelete: Cascade)
+  createdBy User  @relation("ShareLinkCreator", fields: [createdById], references: [id], onDelete: Cascade)
+
+  @@index([boardId])
+}
+
+/// Persisted Yjs document snapshots — powers version history and durable saves.
+model BoardSnapshot {
+  id        String   @id @default(cuid())
+  boardId   String
+  version   Int
+  /// Binary Yjs state (Y.encodeStateAsUpdate). Not human-readable.
+  state     Bytes
+  createdAt DateTime @default(now())
+
+  board Board @relation(fields: [boardId], references: [id], onDelete: Cascade)
+
+  @@unique([boardId, version])
+  @@index([boardId, createdAt])
+}
+
+/// Email invitations to boards or workspaces (Guideline: "Invite Collaborators").
+model Invitation {
+  id          String           @id @default(cuid())
+  email       String
+  role        Role             @default(VIEWER)
+  token       String           @unique
+  status      InvitationStatus @default(PENDING)
+  boardId     String?
+  invitedById String
+  expiresAt   DateTime
+  createdAt   DateTime         @default(now())
+
+  board     Board? @relation(fields: [boardId], references: [id], onDelete: Cascade)
+  invitedBy User   @relation("InvitationInviter", fields: [invitedById], references: [id], onDelete: Cascade)
+
+  @@index([email])
+  @@index([boardId])
+}

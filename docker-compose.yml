@@ -1,0 +1,43 @@
+# Local development infrastructure.
+# Production databases/caches should be managed services with TLS, least-privilege
+# credentials, and automated backups (see Security Guidelines #12, #19).
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: whiteboard_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-whiteboard}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-whiteboard_dev_password}
+      POSTGRES_DB: ${POSTGRES_DB:-whiteboard}
+    ports:
+      # Host port 5433: many Windows/macOS machines run a native PostgreSQL on
+      # 5432, which silently intercepts connections meant for this container.
+      - "5433:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-whiteboard}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: whiteboard_redis
+    restart: unless-stopped
+    # A password is set even locally so code paths always exercise auth.
+    command: redis-server --requirepass ${REDIS_PASSWORD:-whiteboard_dev_password}
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-whiteboard_dev_password}", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  postgres_data:
+  redis_data:
