@@ -26,6 +26,11 @@ packages/db/prisma/*.db
 packages/db/prisma/migrations/dev.db*
 # Generated Prisma client (custom output) — regenerated via `prisma generate`
 packages/db/src/generated/
+# Prisma query engine copied into the web app at build (PE-1 fix)
+apps/web/src/generated/
+
+# Local production error journal (not committed)
+PROD_ERROR.md
 
 # Logs
 logs/
