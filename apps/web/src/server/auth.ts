@@ -44,9 +44,13 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
   },
   logger: {
     error(error) {
+      // Also emit to the console so the real cause is visible in serverless
+      // (Vercel) function logs — the file logger can't write on a read-only FS.
+      console.error('[auth]', error);
       void authLogger.error({ name: error.name, message: error.message, stack: error.stack });
     },
     warn(code) {
+      console.warn('[auth]', code);
       void authLogger.warn(code);
     },
     // `debug` intentionally omitted — too noisy for the auth log.

@@ -32,10 +32,13 @@ export default function HomePage() {
             <Link href="/login">Sign in</Link>
           </Button>
         </div>
-        <p className="text-xs text-muted-foreground">
-          Dev tip: set <code className="rounded bg-muted px-1 py-0.5">ALLOW_DEV_ANON_REALTIME=true</code>{' '}
-          to try the demo board before auth is wired.
-        </p>
+        {process.env.NODE_ENV !== 'production' ? (
+          <p className="text-xs text-muted-foreground">
+            Dev tip: set{' '}
+            <code className="rounded bg-muted px-1 py-0.5">ALLOW_DEV_ANON_REALTIME=true</code> to try
+            the demo board before auth is wired.
+          </p>
+        ) : null}
       </div>
 
       <div className="grid w-full gap-6 sm:grid-cols-3">
