@@ -20,6 +20,13 @@ const nextConfig: NextConfig = {
   // Keep native/server-only deps out of the client/edge bundles.
   serverExternalPackages: ['@prisma/client', 'ioredis'],
 
+  // The Prisma client lives at a custom output in packages/db; its native query
+  // engine (.so.node) isn't traced automatically, so the deployed serverless
+  // function can't find it. Copy the engine binaries into every function bundle.
+  outputFileTracingIncludes: {
+    '/**/*': ['../../packages/db/src/generated/client/*.node'],
+  },
+
   eslint: {
     // Lint is run as its own turbo task; don't fail `next build` on lint.
     ignoreDuringBuilds: true,

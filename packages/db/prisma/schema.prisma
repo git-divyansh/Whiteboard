@@ -19,6 +19,9 @@ generator client {
   // node_modules, and consumers import the client by concrete path (bypassing the
   // broken `@prisma/client` exports-map `types` stub).
   output   = "../src/generated/client"
+  // Generate the query engine for local dev (native) AND the Vercel/AWS Lambda
+  // runtime (rhel-openssl-3.0.x), otherwise the deployed function can't find it.
+  binaryTargets = ["native", "rhel-openssl-3.0.x"]
 }
 
 datasource db {
