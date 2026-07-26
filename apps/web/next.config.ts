@@ -21,10 +21,12 @@ const nextConfig: NextConfig = {
   serverExternalPackages: ['@prisma/client', 'ioredis'],
 
   // The Prisma client lives at a custom output in packages/db; its native query
-  // engine (.so.node) isn't traced automatically, so the deployed serverless
-  // function can't find it. Copy the engine binaries into every function bundle.
+  // engine (.so.node) isn't traced automatically. The build first copies the
+  // engine into ./src/generated/client (a path Prisma searches at runtime — see
+  // scripts/copy-prisma-engine.mjs), and this traces it into every function
+  // bundle so it lands at /var/task/apps/web/src/generated/client (PE-1).
   outputFileTracingIncludes: {
-    '/**/*': ['../../packages/db/src/generated/client/*.node'],
+    '/**/*': ['./src/generated/client/*.node'],
   },
 
   eslint: {
