@@ -22,7 +22,7 @@ const nextConfig: NextConfig = {
   // of the client/edge bundles. Vercel bundles the Prisma query engine for the
   // default `@prisma/client` location automatically (PE-1 root cause was a custom
   // output that defeated that); PrismaPlugin below adds monorepo-safe copying.
-  serverExternalPackages: ['@prisma/client', 'ioredis'],
+  serverExternalPackages: ['@prisma/client', 'ioredis', '@neondatabase/serverless', 'ws'],
 
   webpack: (config, { isServer }) => {
     if (isServer) {
