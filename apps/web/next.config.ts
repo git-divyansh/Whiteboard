@@ -1,35 +1,9 @@
-import { cpSync, existsSync, mkdirSync, readdirSync } from 'node:fs';
 import path from 'node:path';
 
 import { PrismaPlugin } from '@prisma/nextjs-monorepo-workaround-plugin';
 import type { NextConfig } from 'next';
 
 import { securityHeaders } from './src/server/security/headers';
-
-/**
- * PE-1 belt-and-suspenders: the Prisma query engine lives at a custom output in
- * packages/db and wasn't reaching the serverless bundle. We now cover every path
- * Prisma searches at runtime:
- *   1. PrismaPlugin (webpack)  -> copies the engine next to the server bundle
- *      (.next/server), independent of how the build is invoked.
- *   2. copyPrismaEngine()      -> copies it into ./src/generated/client (the
- *      FIRST path Prisma searches), guaranteed at build start via this config.
- *   3. outputFileTracingIncludes -> bundles that copy into each function.
- */
-function copyPrismaEngine(): void {
-  try {
-    const src = path.join(process.cwd(), '..', '..', 'packages', 'db', 'src', 'generated', 'client');
-    const dest = path.join(process.cwd(), 'src', 'generated', 'client');
-    if (!existsSync(src)) return;
-    const engines = readdirSync(src).filter((f) => f.includes('query_engine') && f.endsWith('.node'));
-    if (engines.length === 0) return;
-    mkdirSync(dest, { recursive: true });
-    for (const file of engines) cpSync(path.join(src, file), path.join(dest, file));
-  } catch {
-    // best-effort; the build script / PrismaPlugin are the other layers
-  }
-}
-copyPrismaEngine();
 
 const nextConfig: NextConfig = {
   reactStrictMode: true,
@@ -44,13 +18,11 @@ const nextConfig: NextConfig = {
   // Internal packages are shipped as TypeScript source and transpiled here.
   transpilePackages: ['@whiteboard/shared', '@whiteboard/db', '@whiteboard/auth'],
 
-  // Keep native/server-only deps out of the client/edge bundles.
+  // Prisma (default output) + ioredis are server-only native deps: keep them out
+  // of the client/edge bundles. Vercel bundles the Prisma query engine for the
+  // default `@prisma/client` location automatically (PE-1 root cause was a custom
+  // output that defeated that); PrismaPlugin below adds monorepo-safe copying.
   serverExternalPackages: ['@prisma/client', 'ioredis'],
-
-  // Bundle the copied Prisma engine into every function (path 2 above).
-  outputFileTracingIncludes: {
-    '/**/*': ['./src/generated/client/*.node'],
-  },
 
   webpack: (config, { isServer }) => {
     if (isServer) {

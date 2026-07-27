@@ -7,7 +7,7 @@
  * in the security session. Sign in via a dev OAuth provider or the credential
  * flow once that lands.
  */
-import { PrismaClient } from '../src/generated/client';
+import { PrismaClient } from '@prisma/client';
 
 const prisma = new PrismaClient();
 

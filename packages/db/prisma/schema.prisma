@@ -13,14 +13,10 @@
 
 generator client {
   provider = "prisma-client-js"
-  // Custom output inside the db package. This is the only layout that yields the
-  // FULL generated types under pnpm + moduleResolution: bundler — the client's
-  // internal `@prisma/client/runtime` import resolves via the package's own
-  // node_modules, and consumers import the client by concrete path (bypassing the
-  // broken `@prisma/client` exports-map `types` stub).
-  output   = "../src/generated/client"
-  // Generate the query engine for local dev (native) AND the Vercel/AWS Lambda
-  // runtime (rhel-openssl-3.0.x), otherwise the deployed function can't find it.
+  // Default output (node_modules/.prisma/client). This is what Vercel's built-in
+  // Prisma support auto-detects and bundles the query engine for — a custom
+  // output broke engine bundling on serverless (PE-1).
+  // Generate the engine for local dev (native) AND the Vercel/Lambda runtime.
   binaryTargets = ["native", "rhel-openssl-3.0.x"]
 }
 

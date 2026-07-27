@@ -1,4 +1,4 @@
-import { PrismaClient } from './generated/client';
+import { PrismaClient } from '@prisma/client';
 
 /**
  * Prisma client singleton. In dev, Next.js hot-reload would otherwise spawn a
@@ -25,5 +25,5 @@ if (process.env.NODE_ENV !== 'production') {
 
 // Re-export the generated client namespace so consumers get enums (Role, …),
 // model types (User, Board, …), and the Prisma helper from one place.
-export * from './generated/client';
+export * from '@prisma/client';
 export { PrismaClient };

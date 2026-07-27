@@ -10,7 +10,7 @@
  *
  * Keep RETENTION_DAYS in sync with TRASH_RETENTION_DAYS in @whiteboard/shared.
  */
-import { PrismaClient } from '../src/generated/client';
+import { PrismaClient } from '@prisma/client';
 
 const prisma = new PrismaClient();
 const RETENTION_DAYS = 30;
