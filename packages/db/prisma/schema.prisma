@@ -13,15 +13,12 @@
 
 generator client {
   provider = "prisma-client-js"
-  // Custom output inside the db package. This is the only layout that yields the
-  // FULL generated types under pnpm + moduleResolution: bundler — the client's
-  // internal `@prisma/client/runtime` import resolves via the package's own
-  // node_modules, and consumers import the client by concrete path (bypassing the
-  // broken `@prisma/client` exports-map `types` stub).
-  output   = "../src/generated/client"
-  // Generate the query engine for local dev (native) AND the Vercel/AWS Lambda
-  // runtime (rhel-openssl-3.0.x), otherwise the deployed function can't find it.
-  binaryTargets = ["native", "rhel-openssl-3.0.x"]
+  // driverAdapters lets the client run on the Neon serverless driver in
+  // production — the WASM engine, so NO native query-engine binary is needed
+  // (the definitive fix for the "engine not found on rhel-openssl-3.0.x" PE-1).
+  previewFeatures = ["driverAdapters"]
+  // Native engine still generated for local dev (Docker Postgres) + migrations.
+  binaryTargets   = ["native", "rhel-openssl-3.0.x"]
 }
 
 datasource db {
