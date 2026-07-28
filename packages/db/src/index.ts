@@ -21,9 +21,17 @@ const globalForPrisma = globalThis as unknown as { prisma?: PrismaClient };
 function createPrismaClient(): PrismaClient {
   const url = process.env.DATABASE_URL ?? '';
 
+  // On Vercel (serverless) ALWAYS use the Neon driver adapter → WASM engine, so
+  // no native `libquery_engine-*.so.node` is ever loaded (PE-1). Locally, use it
+  // only for a Neon URL, otherwise the native engine (Docker Postgres). Gating on
+  // VERCEL avoids any URL-parsing quirk silently falling back to the native path.
+  const useNeon = process.env.VERCEL === '1' || /neon\.tech/i.test(url);
+  // eslint-disable-next-line no-console
+  console.log(`[db] Prisma engine: ${useNeon ? 'Neon adapter (WASM, no binary)' : 'native'}`);
+
   // NOTE: never enable statement-level `query` logging in production — it can
   // surface parameter values in logs (Guideline #16). Errors/warnings only.
-  if (/neon\.tech/i.test(url)) {
+  if (useNeon) {
     const pool = new Pool({ connectionString: url });
     return new PrismaClient({
       adapter: new PrismaNeon(pool),
